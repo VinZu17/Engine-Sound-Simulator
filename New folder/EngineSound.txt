@@ -1,0 +1,206 @@
+/**
+ * EngineSound — Sample-based engine sound playback.
+ * Loads WAV samples per engine config, plays them looping,
+ * dan blends antara on/off throttle + low/high RPM samples.
+ *
+ * Ported concepts dari markeasting/engine-audio:
+ * - Equal-power crossfade
+ * - Pitch-shifting via detune cents
+ * - Per-frame gain + detune updates
+ */
+export class EngineSound {
+  private ctx: AudioContext;
+  private output: GainNode;
+
+  // Sample sources: [onThrottleLow, onThrottleHigh, offThrottleLow, offThrottleHigh, limiter?]
+  private sources: AudioBufferSourceNode[] = [];
+  private gains: GainNode[] = [];
+  private buffers: AudioBuffer[] = [];
+
+  private loaded = false;
+  private sampleRate = 44100;
+
+  constructor(ctx: AudioContext, output: GainNode) {
+    this.ctx = ctx;
+    this.output = output;
+    this.sampleRate = ctx.sampleRate;
+  }
+
+  /**
+   * Load engine sound samples dari config.
+   * Falls back ke generated tones kalau file gak ada.
+   */
+  async loadSamples(samples: Record<string, string>): Promise<void> {
+    this.stopAll();
+
+    const sampleKeys = ['onThrottleLow', 'onThrottleHigh', 'offThrottleLow', 'offThrottleHigh'];
+    this.buffers = [];
+
+    for (const key of sampleKeys) {
+      const path = samples[key];
+      let buffer: AudioBuffer | null = null;
+
+      if (path) {
+        try {
+          const response = await fetch(path);
+          if (response.ok) {
+            const arrayBuffer = await response.arrayBuffer();
+            buffer = await this.ctx.decodeAudioData(arrayBuffer);
+          }
+        } catch {
+          // File not found — pakai synth fallback
+        }
+      }
+
+      if (!buffer) {
+        buffer = this.generateFallbackBuffer(key);
+      }
+
+      this.buffers.push(buffer);
+
+      // Create looping source + gain node
+      const source = this.ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+
+      source.connect(gain);
+      gain.connect(this.output);
+      source.start(0);
+
+      this.sources.push(source);
+      this.gains.push(gain);
+    }
+
+    this.loaded = true;
+  }
+
+  /**
+   * Generate fallback engine tone — basic waveform synthesis.
+   * Bikin suara engine sederhana kalau gak ada sample WAV.
+   */
+  private generateFallbackBuffer(type: string): AudioBuffer {
+    const sr = this.sampleRate;
+    const duration = 2;
+    const length = sr * duration;
+    const buffer = this.ctx.createBuffer(2, length, sr); // stereo
+
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buffer.getChannelData(ch);
+
+      // Base frequency beda per type
+      const isHigh = type.includes('High');
+      const isOnThrottle = type.includes('onThrottle');
+      const baseFreq = isHigh ? 180 : 90;
+
+      for (let i = 0; i < length; i++) {
+        const t = i / sr;
+        let sample = 0;
+
+        // Fundamental — engine firing frequency
+        const fundamental = Math.sin(2 * Math.PI * baseFreq * t);
+        sample += fundamental * 0.3;
+
+        // 2nd harmonic — exhaust pulse
+        const harmonic2 = Math.sin(2 * Math.PI * baseFreq * 2 * t);
+        sample += harmonic2 * 0.2;
+
+        // 3rd harmonic
+        const harmonic3 = Math.sin(2 * Math.PI * baseFreq * 3 * t);
+        sample += harmonic3 * 0.1;
+
+        // Sub-harmonic — deep rumble
+        const sub = Math.sin(2 * Math.PI * baseFreq * 0.5 * t);
+        sample += sub * 0.15;
+
+        // Slight noise — intake air
+        const noise = (Math.random() * 2 - 1) * (isOnThrottle ? 0.06 : 0.02);
+        sample += noise;
+
+        // Stereo offset buat width
+        const stereoOffset = ch === 0 ? 0.003 : -0.003;
+        const delayed = Math.sin(2 * Math.PI * baseFreq * (t + stereoOffset));
+        sample += delayed * 0.05;
+
+        // Envelope
+        const vol = isOnThrottle ? 0.6 : 0.3;
+        data[i] = sample * vol;
+      }
+    }
+
+    return buffer;
+  }
+
+  /**
+   * Update sound parameters — called setiap frame.
+   * @param rpm Current engine RPM
+   * @param throttle 0-1
+   * @param crossfadeRPM RPM dimana low→high blend
+   */
+  update(rpm: number, throttle: number, crossfadeRPM: number): void {
+    if (!this.loaded || this.gains.length < 4) return;
+
+    const now = this.ctx.currentTime;
+
+    // Normalize RPM (idle 800 → 0, redline 9000 → 1)
+    const rpmNorm = Math.min(1, Math.max(0, (rpm - 800) / (9000 - 800)));
+    const crossfadePoint = crossfadeRPM / 9000;
+
+    // Crossfade factor: 0 = low samples, 1 = high samples
+    // Smooth transition around crossfadeRPM
+    const crossfade = Math.min(1, Math.max(0,
+      (rpmNorm - (crossfadePoint - 0.15)) / 0.3
+    ));
+
+    // Active state: on-throttle vs off-throttle
+    const onThrottleActive = throttle > 0.05;
+
+    // ═══ GAIN BLENDING ═══
+    // onThrottleLow:  on throttle,  low RPM
+    // onThrottleHigh: on throttle,  high RPM
+    // offThrottleLow: off throttle, low RPM
+    // offThrottleHigh: off throttle, high RPM
+
+    const onGain = onThrottleActive ? 1 : 0;
+    const offGain = onThrottleActive ? 0 : 1;
+
+    // Apply gains dengan smooth transition
+    this.setGain(this.gains[0], onGain * (1 - crossfade));       // onLow
+    this.setGain(this.gains[1], onGain * crossfade);              // onHigh
+    this.setGain(this.gains[2], offGain * (1 - crossfade));      // offLow
+    this.setGain(this.gains[3], offGain * crossfade);             // offHigh
+
+    // ═══ PITCH SHIFTING ═══
+    // Map RPM ke detune cents (1200 cents = 1 octave)
+    // Reference: 3000 RPM = 0 cents
+    for (const source of this.sources) {
+      const rpmRatio = Math.max(0.1, rpm / 3000);
+      const detune = Math.log2(rpmRatio) * 1200;
+      source.detune.setTargetAtTime(detune, now, 0.02);
+    }
+  }
+
+  private setGain(gainNode: GainNode, value: number): void {
+    gainNode.gain.setTargetAtTime(
+      Math.max(0, Math.min(1, value)),
+      this.ctx.currentTime,
+      0.02
+    );
+  }
+
+  isLoaded(): boolean {
+    return this.loaded;
+  }
+
+  stopAll(): void {
+    for (const source of this.sources) {
+      try { source.stop(); } catch { /* already stopped */ }
+    }
+    this.sources = [];
+    this.gains = [];
+    this.buffers = [];
+    this.loaded = false;
+  }
+}

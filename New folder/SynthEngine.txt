@@ -1,0 +1,277 @@
+/**
+ * SynthEngine — Realtime engine sound synthesis.
+ * Multi-harmonic exhaust + sub-bass + resonance + intake + mechanical.
+ * Frequencies scale sesuai cylinder count.
+ */
+export class SynthEngine {
+  private ctx: AudioContext;
+  private output: GainNode;
+
+  // Exhaust harmonics (5 layer untuk richness)
+  private exhaustOscs: OscillatorNode[] = [];
+  private exhaustGains: GainNode[] = [];
+  private exhaustMasterGain: GainNode | null = null;
+  private exhaustFilter: BiquadFilterNode | null = null;
+  private exhaustResonance: BiquadFilterNode | null = null;
+
+  // Sub-bass (low frequency rumble)
+  private subOsc: OscillatorNode | null = null;
+  private subGain: GainNode | null = null;
+
+  // Intake noise
+  private intakeNoise: AudioBufferSourceNode | null = null;
+  private intakeGain: GainNode | null = null;
+  private intakeFilter: BiquadFilterNode | null = null;
+
+  // Mechanical clatter
+  private mechNoise: AudioBufferSourceNode | null = null;
+  private mechGain: GainNode | null = null;
+  private mechFilter: BiquadFilterNode | null = null;
+
+  // Rev limiter
+  private limiterLFO: OscillatorNode | null = null;
+  private limiterGain: GainNode | null = null;
+
+  private running = false;
+  private noiseBuffer: AudioBuffer | null = null;
+
+  private cylinderCount = 10;
+  private redline = 9000;
+
+  constructor(ctx: AudioContext, output: GainNode) {
+    this.ctx = ctx;
+    this.output = output;
+    this.createNoiseBuffer();
+  }
+
+  setEngineConfig(cylinders: number, redline: number): void {
+    this.cylinderCount = cylinders;
+    this.redline = redline;
+  }
+
+  private createNoiseBuffer(): void {
+    const sr = this.ctx.sampleRate;
+    const len = sr * 2;
+    this.noiseBuffer = this.ctx.createBuffer(2, len, sr); // stereo
+    for (let ch = 0; ch < 2; ch++) {
+      const data = this.noiseBuffer.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        // Pink noise approximation (1/f) — lebih natural dari white noise
+        const white = Math.random() * 2 - 1;
+        data[i] = white * (1 - (i / len) * 0.3); // slight decay
+      }
+    }
+  }
+
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+
+    // ═══ EXHAUST MASTER ═══
+    this.exhaustMasterGain = this.ctx.createGain();
+    this.exhaustMasterGain.gain.value = 0;
+
+    this.exhaustFilter = this.ctx.createBiquadFilter();
+    this.exhaustFilter.type = 'lowpass';
+    this.exhaustFilter.frequency.value = 800;
+    this.exhaustFilter.Q.value = 2;
+
+    // Resonance filter —模拟 exhaust pipe resonance
+    this.exhaustResonance = this.ctx.createBiquadFilter();
+    this.exhaustResonance.type = 'peaking';
+    this.exhaustResonance.frequency.value = 120;
+    this.exhaustResonance.Q.value = 3;
+    this.exhaustResonance.gain.value = 6;
+
+    // ═══ 5 EXHAUST HARMONICS ═══
+    // Fundamental + 4 harmonics untuk rich exhaust tone
+    const types: OscillatorType[] = ['sawtooth', 'square', 'sawtooth', 'triangle', 'sawtooth'];
+    const harmonicMultipliers = [1, 2, 3, 4.5, 6];
+    const harmonicGains = [0.4, 0.25, 0.15, 0.08, 0.05];
+
+    for (let i = 0; i < 5; i++) {
+      const osc = this.ctx.createOscillator();
+      osc.type = types[i];
+      osc.frequency.value = 80 * harmonicMultipliers[i];
+
+      const gain = this.ctx.createGain();
+      gain.gain.value = harmonicGains[i];
+
+      osc.connect(gain);
+      gain.connect(this.exhaustMasterGain);
+      osc.start();
+
+      this.exhaustOscs.push(osc);
+      this.exhaustGains.push(gain);
+    }
+
+    // Routing: oscillators → masterGain → resonance → filter → output
+    this.exhaustMasterGain.connect(this.exhaustResonance);
+    this.exhaustResonance.connect(this.exhaustFilter);
+    this.exhaustFilter.connect(this.output);
+
+    // ═══ SUB-BASS ═══
+    // Low rumble — exhaust pulse frequency / 2
+    this.subOsc = this.ctx.createOscillator();
+    this.subOsc.type = 'sine';
+    this.subOsc.frequency.value = 40;
+
+    this.subGain = this.ctx.createGain();
+    this.subGain.gain.value = 0;
+
+    const subFilter = this.ctx.createBiquadFilter();
+    subFilter.type = 'lowpass';
+    subFilter.frequency.value = 100;
+    subFilter.Q.value = 1;
+
+    this.subOsc.connect(subFilter);
+    subFilter.connect(this.subGain);
+    this.subGain.connect(this.output);
+    this.subOsc.start();
+
+    // ═══ INTAKE NOISE ═══
+    this.intakeGain = this.ctx.createGain();
+    this.intakeGain.gain.value = 0;
+
+    this.intakeFilter = this.ctx.createBiquadFilter();
+    this.intakeFilter.type = 'bandpass';
+    this.intakeFilter.frequency.value = 2500;
+    this.intakeFilter.Q.value = 1.2;
+
+    this.intakeNoise = this.ctx.createBufferSource();
+    this.intakeNoise.buffer = this.noiseBuffer;
+    this.intakeNoise.loop = true;
+
+    this.intakeNoise.connect(this.intakeFilter);
+    this.intakeFilter.connect(this.intakeGain);
+    this.intakeGain.connect(this.output);
+    this.intakeNoise.start();
+
+    // ═══ MECHANICAL CLATTER ═══
+    this.mechGain = this.ctx.createGain();
+    this.mechGain.gain.value = 0;
+
+    this.mechFilter = this.ctx.createBiquadFilter();
+    this.mechFilter.type = 'highpass';
+    this.mechFilter.frequency.value = 2000;
+    this.mechFilter.Q.value = 0.7;
+
+    this.mechNoise = this.ctx.createBufferSource();
+    this.mechNoise.buffer = this.noiseBuffer;
+    this.mechNoise.loop = true;
+
+    this.mechNoise.connect(this.mechFilter);
+    this.mechFilter.connect(this.mechGain);
+    this.mechGain.connect(this.output);
+    this.mechNoise.start();
+
+    // ═══ REV LIMITER LFO ═══
+    this.limiterLFO = this.ctx.createOscillator();
+    this.limiterLFO.type = 'square';
+    this.limiterLFO.frequency.value = 0;
+
+    this.limiterGain = this.ctx.createGain();
+    this.limiterGain.gain.value = 0;
+
+    this.limiterLFO.connect(this.limiterGain);
+    this.limiterGain.connect(this.exhaustMasterGain!.gain);
+    this.limiterLFO.start();
+  }
+
+  update(rpm: number, throttle: number, atRevLimiter: boolean): void {
+    if (!this.running) return;
+
+    const now = this.ctx.currentTime;
+    const rpmNorm = Math.min(1, rpm / this.redline);
+
+    // ═══ EXHAUST — firing frequency + harmonics ═══
+    if (this.exhaustMasterGain && this.exhaustFilter && this.exhaustResonance) {
+      // Firing frequency = RPM/60 × cylinders/2 (4-stroke)
+      const firingFreq = (rpm / 60) * (this.cylinderCount / 2);
+      const harmonicMultipliers = [1, 2, 3, 4.5, 6];
+
+      // Update semua harmonic frequencies
+      for (let i = 0; i < this.exhaustOscs.length; i++) {
+        this.exhaustOscs[i].frequency.setTargetAtTime(
+          firingFreq * harmonicMultipliers[i], now, 0.015
+        );
+      }
+
+      // Volume: naik sesuai RPM + throttle, lebih agresif dari sebelumnya
+      const exhaustVol = (0.2 + rpmNorm * 0.5) * (0.2 + throttle * 0.8);
+      this.exhaustMasterGain.gain.setTargetAtTime(exhaustVol, now, 0.02);
+
+      // Filter cutoff: brighter di RPM tinggi + throttle
+      const cutoff = 300 + rpmNorm * 1800 + throttle * 800;
+      this.exhaustFilter.frequency.setTargetAtTime(cutoff, now, 0.02);
+
+      // Resonance frequency naik sesuai firing frequency
+      this.exhaustResonance.frequency.setTargetAtTime(
+        firingFreq * 2, now, 0.03
+      );
+      // Resonance lebih kuat di RPM tinggi
+      this.exhaustResonance.gain.setTargetAtTime(
+        3 + rpmNorm * 8, now, 0.03
+      );
+    }
+
+    // ═══ SUB-BASS ═══
+    if (this.subOsc && this.subGain) {
+      const subFreq = (rpm / 60) * (this.cylinderCount / 4);
+      this.subOsc.frequency.setTargetAtTime(subFreq, now, 0.02);
+      const subVol = (0.1 + rpmNorm * 0.2) * (0.3 + throttle * 0.7);
+      this.subGain.gain.setTargetAtTime(subVol, now, 0.03);
+    }
+
+    // ═══ INTAKE ═══
+    if (this.intakeGain && this.intakeFilter) {
+      // Intake lebih keras saat throttle buka + RPM tinggi
+      const intakeVol = throttle * 0.12 * (0.4 + rpmNorm * 0.6);
+      this.intakeGain.gain.setTargetAtTime(intakeVol, now, 0.02);
+      const intakeCutoff = 800 + throttle * 4000 + rpmNorm * 1500;
+      this.intakeFilter.frequency.setTargetAtTime(intakeCutoff, now, 0.02);
+      this.intakeFilter.Q.setTargetAtTime(0.5 + throttle * 1.5, now, 0.02);
+    }
+
+    // ═══ MECHANICAL CLATTER ═══
+    if (this.mechGain && this.mechFilter) {
+      // Valve/injector clatter — lebih keras di RPM tinggi
+      const mechVol = rpmNorm * 0.06 * (0.5 + throttle * 0.5);
+      this.mechGain.gain.setTargetAtTime(mechVol, now, 0.03);
+      // Highpass cutoff naik sesuai RPM
+      this.mechFilter.frequency.setTargetAtTime(
+        1500 + rpmNorm * 3000, now, 0.03
+      );
+    }
+
+    // ═══ REV LIMITER ═══
+    if (this.limiterLFO && this.limiterGain) {
+      if (atRevLimiter) {
+        this.limiterLFO.frequency.setTargetAtTime(10 + Math.random() * 8, now, 0.005);
+        this.limiterGain.gain.setTargetAtTime(0.4, now, 0.005);
+      } else {
+        this.limiterGain.gain.setTargetAtTime(0, now, 0.02);
+      }
+    }
+  }
+
+  stop(): void {
+    if (!this.running) return;
+    this.running = false;
+
+    try {
+      this.exhaustOscs.forEach(o => o.stop());
+      this.subOsc?.stop();
+      this.intakeNoise?.stop();
+      this.mechNoise?.stop();
+      this.limiterLFO?.stop();
+    } catch { /* already stopped */ }
+
+    this.exhaustOscs = [];
+    this.exhaustGains = [];
+    this.subOsc = null;
+    this.intakeNoise = null;
+    this.mechNoise = null;
+    this.limiterLFO = null;
+  }
+}
