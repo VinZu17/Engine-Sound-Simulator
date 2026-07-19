@@ -58,6 +58,16 @@ export class Vehicle {
   }
 
   step(dt: number, throttleInput: number, brakeInput: number): void {
+    // ═══ SUB-STEPPING: 10x per frame buat stability ═══
+    const subSteps = 10;
+    const subDt = dt / subSteps;
+
+    for (let s = 0; s < subSteps; s++) {
+      this.subStep(subDt, throttleInput, brakeInput);
+    }
+  }
+
+  private subStep(dt: number, throttleInput: number, brakeInput: number): void {
     const state = this.engine.getState();
     const config = this.engine.getConfig();
 
