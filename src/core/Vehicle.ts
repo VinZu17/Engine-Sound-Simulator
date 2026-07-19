@@ -3,11 +3,13 @@ import { Drivetrain } from './Drivetrain';
 import { EngineConfig, SimulationState } from './types';
 
 /**
- * Vehicle orchestrator — ported concepts dari markeasting/engine-audio.
- * - 20x sub-stepping per frame
- * - Throttle: pow(throttle, 1.2) + pow(1-throttle, 1.2) * braking
- * - Idle: ratio(rpm, idle*0.9, idle) blend
- * - Limiter: soft (gradual cut) + hard (delay + feed-back)
+ * Vehicle orchestrator — ported dari engine-sim + markeasting.
+ * - 10x sub-stepping per frame (stability)
+ * - Crank angle torque modulation + volumetric efficiency (engine-sim)
+ * - Ignition-cut rev limiter (engine-sim)
+ * - Clutch inertia coupling (engine-sim transmission.cpp)
+ * - PD controller idle (engine-sim governor)
+ * - RPM-dependent engine braking (engine-sim)
  */
 export class Vehicle {
   private engine: Engine;
@@ -21,9 +23,11 @@ export class Vehicle {
   private rollingResistance = 0.015;
   private wheelInertia = 1.5;
 
-  // Limiter state
-  private lastLimiterTime = 0;
-  private limiterDelay = 100; // ms throttle feed-back delay
+  // Ignition-cut rev limiter (dari engine-sim: cut ignition 0.5s)
+  private ignitionCutTimer = 0;
+
+  // Idle PD controller (dari engine-sim governor: PD on speed-squared)
+  private idleVelocity = 0;
 
   private logFrame = 0;
 
@@ -52,11 +56,6 @@ export class Vehicle {
     state.rpm = 0;
   }
 
-  /** Ratio function — map value [min,max] ke [0,1] */
-  private ratio(value: number, min: number, max: number): number {
-    return Math.max(0, Math.min(1, (value - min) / (max - min)));
-  }
-
   step(dt: number, throttleInput: number, brakeInput: number): void {
     // ═══ SUB-STEPPING: 10x per frame buat stability ═══
     const subSteps = 10;
@@ -81,97 +80,73 @@ export class Vehicle {
     const totalRatio = this.drivetrain.getTotalRatio();
     const clutchFactor = this.drivetrain.getClutchPosition();
 
-    // ═══ REV LIMITER — Soft + Hard ═══
-    let effectiveThrottle = throttleInput;
-    const softLimiter = config.redline * 0.95;
-    const now = performance.now();
-
-    if (state.rpm >= softLimiter && throttleInput > 0) {
-      // Soft limiter: gradual throttle cut
-      const softRatio = this.ratio(state.rpm, softLimiter, config.redline);
-      effectiveThrottle *= Math.pow(1 - softRatio, 0.05);
-    }
-
+    // ═══ IGNITION-CUT REV LIMITER (dari engine-sim ignition_module.cpp) ═══
+    let isRevLimited = false;
     if (state.rpm >= config.redline) {
-      // Hard limiter: fuel cut untuk limiterDelay ms
-      effectiveThrottle = 0;
-      if (now - this.lastLimiterTime > this.limiterDelay) {
-        // Feed throttle back
-        const feedBack = this.ratio(now - this.lastLimiterTime - this.limiterDelay, 0, 100);
-        effectiveThrottle = throttleInput * feedBack;
+      this.ignitionCutTimer = 0.5;
+    }
+    if (this.ignitionCutTimer > 0) {
+      this.ignitionCutTimer -= dt;
+      this.ignitionCutTimer = Math.max(0, this.ignitionCutTimer);
+      isRevLimited = true;
+    }
+
+    // ═══ TORSI MESIN — Complete pipeline ═══
+    const engineTorque = this.engine.calculateNetTorque(throttleInput, isRevLimited);
+
+    // ═══ CLUTCH INERTIA COUPLING (dari engine-sim transmission.cpp) ═══
+    let clutchTorque = 0;
+    if (gear > 0 && clutchFactor > 0 && state.isRunning) {
+      const maxClutchCapacity = 500 * clutchFactor;
+      const targetEngineRPM = state.wheelRPM * totalRatio;
+      const rpmDiff = state.rpm - Math.max(targetEngineRPM, config.idleRPM);
+      clutchTorque = rpmDiff * 0.5 * clutchFactor;
+      clutchTorque = Math.max(-maxClutchCapacity, Math.min(maxClutchCapacity, clutchTorque));
+
+      // Energy conservation during hard-lock
+      if (clutchFactor >= 0.99 && Math.abs(rpmDiff) < 50) {
+        const f = this.wheelRadius / totalRatio;
+        const I_total = config.flywheelInertia + this.vehicleMass * f * f;
+        const E_rot = 0.5 * I_total * Math.pow(state.rpm * Math.PI / 30, 2);
+        const targetOmega = targetEngineRPM * Math.PI / 30;
+        const newOmega = Math.sign(targetOmega) * Math.sqrt(Math.abs(2 * E_rot / I_total));
+        state.rpm = newOmega * 30 / Math.PI;
+        clutchTorque = 0;
       }
-    } else if (this.lastLimiterTime > 0 && now - this.lastLimiterTime < this.limiterDelay) {
-      // Masih dalam delay period
-      effectiveThrottle = 0;
-    } else {
-      this.lastLimiterTime = 0;
     }
 
-    if (state.rpm >= config.redline && this.lastLimiterTime === 0) {
-      this.lastLimiterTime = now;
-    }
-
-    // ═══ TORSI MESIN ═══
-    let engineTorque = 0;
+    // ═══ RPM UPDATE ═══
+    const netEngineTorque = engineTorque - clutchTorque;
     if (state.isRunning) {
-      const peakTorque = this.engine.getMaxTorque();
-
-      if (effectiveThrottle < 0.01) {
-        // Off-throttle: engine braking
-        const braking = peakTorque * 0.35 * Math.min(1, state.rpm / config.redline);
-        engineTorque = -braking;
-      } else {
-        // On-throttle: pow(throttle, 1.2) — reference formula
-        engineTorque = this.engine.getTorqueAtRPM(state.rpm) * Math.pow(effectiveThrottle, 1.2);
-      }
+      const inertia = (gear > 0 && clutchFactor > 0.1)
+        ? config.flywheelInertia + this.vehicleMass * Math.pow(this.wheelRadius / totalRatio, 2) * clutchFactor
+        : config.flywheelInertia;
+      const alpha = netEngineTorque / inertia;
+      state.rpm += alpha * dt * (30 / Math.PI);
     } else {
       state.throttle = 0;
-      engineTorque = 0;
-      // Jangan reset RPM kalau starter lagi engaged
-      if (state.rpm < 50 && !state.isStarterEngaged) {
-        state.rpm = 0;
+    }
+
+    // ═══ IDLE PD CONTROLLER (dari engine-sim governor.cpp) ═══
+    if (state.isRunning && !isRevLimited) {
+      if (state.rpm < config.idleRPM * 1.1) {
+        const ds = config.idleRPM * config.idleRPM - state.rpm * state.rpm;
+        this.idleVelocity += dt * (-ds * 0.0001) - this.idleVelocity * dt * 0.5;
+        this.idleVelocity = Math.max(-0.3, Math.min(0.3, this.idleVelocity));
+        const idleTorque = this.idleVelocity * config.flywheelInertia * 100;
+        state.rpm += (idleTorque / config.flywheelInertia) * dt * (30 / Math.PI);
       }
-    }
-
-    // ═══ CLUTCH / DRIVETRAIN ═══
-    const rawTarget = (gear > 0) ? state.wheelRPM * totalRatio : 0;
-    const effectiveTarget = Math.max(rawTarget, config.idleRPM);
-    let clutchTorque = 0;
-
-    if (gear > 0 && clutchFactor > 0 && state.isRunning) {
-      const rpmDiff = state.rpm - effectiveTarget;
-      const springK = 0.5;
-      const maxClutchCapacity = 500 * clutchFactor;
-      clutchTorque = rpmDiff * springK * clutchFactor;
-      clutchTorque = Math.max(-maxClutchCapacity, Math.min(maxClutchCapacity, clutchTorque));
-    }
-
-    // ═══ INERSIA MESIN ═══
-    const netEngineTorque = engineTorque - clutchTorque;
-    const engineAlpha = netEngineTorque / config.flywheelInertia;
-    const rpmChange = engineAlpha * dt * (30 / Math.PI);
-    state.rpm += rpmChange;
-
-    // Hard-lock blend
-    if (gear > 0 && clutchFactor >= 0.99 && Math.abs(state.rpm - effectiveTarget) < 100 && state.isRunning) {
-      state.rpm = state.rpm * 0.9 + effectiveTarget * 0.1;
-    }
-
-    // ═══ IDLE CONTROL — ratio blend ═══
-    if (state.isRunning) {
-      const idleBlend = this.ratio(state.rpm, config.idleRPM * 0.9, config.idleRPM);
-      if (state.rpm < config.idleRPM) {
-        // Snap kalau terlalu rendah
-        if (state.rpm < config.idleRPM * 0.5) {
-          state.rpm = config.idleRPM;
-        } else {
-          state.rpm += (config.idleRPM - state.rpm) * dt * 10 * idleBlend;
-        }
+      if (state.rpm < config.idleRPM * 0.5) {
+        state.rpm += (config.idleRPM - state.rpm) * dt * 8;
       }
     }
 
     // Clamp RPM
-    state.rpm = Math.max(state.isRunning ? config.idleRPM * 0.5 : 0, Math.min(state.rpm, config.redline + 200));
+    if (!state.isRunning && !state.isStarterEngaged) {
+      state.rpm = Math.max(0, state.rpm);
+    } else if (state.isRunning) {
+      state.rpm = Math.max(config.idleRPM * 0.4, Math.min(state.rpm, config.redline + 300));
+    }
 
     // ═══ FISIKA RODA ═══
     const wheelTorque = (gear > 0 && state.isRunning) ? clutchTorque * totalRatio : 0;
@@ -211,9 +186,9 @@ export class Vehicle {
     if (this.logFrame % 30 === 0) {
       console.log(
         `[Vehicle] RPM=${Math.round(state.rpm)} | Gear=${gear} | ` +
-        `Throttle=${throttleInput.toFixed(2)} | EffThrottle=${effectiveThrottle.toFixed(2)} | ` +
+        `Throttle=${throttleInput.toFixed(2)} | ` +
         `Speed=${(state.vehicleSpeed).toFixed(1)}km/h` +
-        (state.rpm >= config.redline ? ' | [REV LIMITED]' : '')
+        (isRevLimited ? ' | [IGNITION CUT]' : '')
       );
     }
 

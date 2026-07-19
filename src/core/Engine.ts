@@ -1,19 +1,21 @@
 import { EngineConfig, SimulationState } from './types';
 
 /**
- * Core engine simulation — ported concepts dari markeasting/engine-audio.
+ * Core engine simulation — ported dari engine-sim + markeasting.
+ * - Crank angle torque modulation (individual cylinder firings)
+ * - Volumetric efficiency curve (torque peaks at mid-RPM)
  * - Throttle curve: pow(throttle, 1.2)
- * - Idle control: ratio(rpm, idle*0.9, idle)
- * - Limiter: soft + hard dengan delay
- * - Engine braking: pow(1-throttle, 1.2) * braking
+ * - Ignition-cut rev limiter
+ * - Engine braking: RPM-dependent compression model
  */
 export class Engine {
   private config: EngineConfig;
   private state: SimulationState;
-  private lastLimiterTime = 0;
+  private firingAngle: number;
 
   constructor(config: EngineConfig) {
     this.config = config;
+    this.firingAngle = (4 * Math.PI) / config.cylinders;
     this.state = {
       rpm: 0,
       throttle: 0,
@@ -55,35 +57,87 @@ export class Engine {
     return Math.max(...this.config.torqueCurve.map((p) => p.nm));
   }
 
-  /** Engine braking — pow(1-throttle, 1.2) × braking */
-  getEngineBraking(rpm: number): number {
-    const peakTorque = this.getMaxTorque();
-    const rpmRatio = Math.min(1, rpm / this.config.redline);
-    return -(peakTorque * 0.35 * rpmRatio);
+  /**
+   * Crank angle torque modulation — simulasi individual cylinder combustion pulses.
+   * Setiap cylinder menghasilkan Gaussian pulse saat power stroke.
+   * Total torque = baseTorque × (0.7 + 0.3 × normalizedModulation)
+   */
+  getCrankTorqueModulation(baseTorque: number): number {
+    const crankAngle = this.state.crankAngle;
+    const cylinders = this.config.cylinders;
+    let modTorque = 0;
+    for (let i = 0; i < cylinders; i++) {
+      const phase = crankAngle - (i * this.firingAngle);
+      const normalizedPhase = ((phase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+      const pulse = Math.exp(-Math.pow((normalizedPhase - 0.3) * 4, 2));
+      modTorque += pulse;
+    }
+    modTorque /= cylinders;
+    return baseTorque * (0.7 + 0.3 * modTorque);
   }
 
-  /** Ratio function — map value from [min,max] to [0,1] */
-  private ratio(value: number, min: number, max: number): number {
-    return Math.max(0, Math.min(1, (value - min) / (max - min)));
+  /**
+   * Simplified volumetric efficiency — peaks di 60% redline.
+   * Drops di very low RPM (poor intake filling) dan high RPM (restrictions).
+   */
+  getVolumetricEfficiency(rpm: number): number {
+    if (rpm < 100) return 0.5;
+    const norm = rpm / this.config.redline;
+    return 0.82 + 0.18 * Math.exp(-Math.pow((norm - 0.6) * 2.8, 2));
+  }
+
+  /**
+   * Engine braking — peaks di mid-RPM (compression + pumping losses).
+   */
+  getEngineBraking(rpm: number): number {
+    const peakTorque = this.getMaxTorque();
+    const norm = rpm / this.config.redline;
+    const brakingFactor = 0.28 * Math.sin(norm * Math.PI * 0.85) + 0.07;
+    return -(peakTorque * brakingFactor);
+  }
+
+  /**
+   * Complete torque pipeline: lookup × VE × crankMod × throttle^1.2 + braking
+   */
+  calculateNetTorque(throttle: number, isRevLimited: boolean): number {
+    if (!this.state.isRunning || isRevLimited) return 0;
+    const baseTorque = this.getTorqueAtRPM(this.state.rpm);
+    const ve = this.getVolumetricEfficiency(this.state.rpm);
+    const crankMod = this.getCrankTorqueModulation(baseTorque);
+    const throttleFactor = Math.pow(Math.max(0, throttle), 1.2);
+    const braking = throttle < 0.01 ? this.getEngineBraking(this.state.rpm) : 0;
+    return crankMod * ve * throttleFactor + braking;
+  }
+
+  /** Starter motor — spring-damper ke target RPM (dari engine-sim starter_motor.cpp) */
+  applyStarter(dt: number): void {
+    if (this.state.isStarterEngaged && this.state.ignitionOn) {
+      const targetRPM = 1500;
+      const starterTorque = 80;
+      const rpmError = targetRPM - this.state.rpm;
+      const torque = Math.sign(rpmError) * Math.min(Math.abs(rpmError * 0.3), starterTorque);
+      const alpha = torque / this.config.flywheelInertia;
+      this.state.rpm += alpha * dt * (30 / Math.PI);
+      if (this.state.rpm >= 800) {
+        this.state.isRunning = true;
+        this.state.isStarterEngaged = false;
+      }
+    }
   }
 
   step(dt: number, _loadTorque: number, _throttleInput: number): void {
-    // Starter motor logic — target 1500 RPM, ramp cepat
     if (!this.state.isRunning) {
-      if (this.state.isStarterEngaged && this.state.ignitionOn) {
-        this.state.rpm += (1500 - this.state.rpm) * dt * 25;
-        if (this.state.rpm >= 800) {
-          this.state.isRunning = true;
-          this.state.isStarterEngaged = false;
-        }
+      this.applyStarter(dt);
+      if (this.state.rpm > 0) {
+        const radsPerSecond = (this.state.rpm * 2 * Math.PI) / 60;
+        this.state.crankAngle += radsPerSecond * dt;
+        this.state.crankAngle %= (4 * Math.PI);
       }
       return;
     }
-
-    // Crank angle update
     const radsPerSecond = (this.state.rpm * 2 * Math.PI) / 60;
     this.state.crankAngle += radsPerSecond * dt;
-    this.state.crankAngle %= 2 * Math.PI;
+    this.state.crankAngle %= (4 * Math.PI);
   }
 
   isAtRevLimiter(): boolean {
@@ -91,11 +145,11 @@ export class Engine {
   }
 
   getCrankFraction(): number {
-    return this.state.crankAngle / (2 * Math.PI);
+    return (this.state.crankAngle % (2 * Math.PI)) / (2 * Math.PI);
   }
 
   getCylinderFiringAngle(cylinderIndex: number): number {
-    const totalAngle = 2 * Math.PI;
+    const totalAngle = 4 * Math.PI;
     const cylinderSpacing = totalAngle / this.config.cylinders;
     return (this.state.crankAngle + cylinderIndex * cylinderSpacing) % totalAngle;
   }
