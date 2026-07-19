@@ -282,7 +282,8 @@ export class SynthEngine {
           firingFreq * harmonicMultipliers[i], now, 0.015
         );
       }
-      const exhaustVol = (0.15 + rpmNorm * 0.55) * (0.15 + throttle * 0.85);
+      // Off-throttle masih cukup keras (engine braking)
+      const exhaustVol = (0.15 + rpmNorm * 0.55) * (0.35 + throttle * 0.65);
       this.exhaustMasterGain.gain.setTargetAtTime(exhaustVol, now, 0.02);
       const cutoff = 500 + rpmNorm * 2000 + throttle * 1000;
       this.exhaustFilter.frequency.setTargetAtTime(cutoff, now, 0.02);
@@ -294,7 +295,7 @@ export class SynthEngine {
     if (this.subOsc && this.subGain) {
       const subFreq = (rpm / 60) * (this.cylinderCount / 4);
       this.subOsc.frequency.setTargetAtTime(subFreq, now, 0.02);
-      const subVol = (0.15 + rpmNorm * 0.15) * (0.3 + throttle * 0.7);
+      const subVol = (0.15 + rpmNorm * 0.15) * (0.5 + throttle * 0.5);
       this.subGain.gain.setTargetAtTime(subVol, now, 0.03);
     }
 
@@ -381,7 +382,7 @@ export class SynthEngine {
         this.limiterLFO.frequency.setTargetAtTime(15 + Math.random() * 10, now, 0.003);
         this.limiterGain.gain.setTargetAtTime(0.6, now, 0.003);
         if (this.exhaustMasterGain) {
-          const bounceVol = (0.15 + rpmNorm * 0.55) * (0.15 + throttle * 0.85) * 0.5;
+          const bounceVol = (0.15 + rpmNorm * 0.55) * (0.35 + throttle * 0.65) * 0.5;
           this.exhaustMasterGain.gain.setTargetAtTime(bounceVol, now, 0.003);
         }
       } else {
