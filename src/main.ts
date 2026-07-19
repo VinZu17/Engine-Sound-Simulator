@@ -164,6 +164,8 @@ class EngineSimApp {
     // Update audio
     const state = this.vehicle.getState();
     const config = this.vehicle.getEngine().getConfig();
+    const gearRatio = this.vehicle.getDrivetrain().getTotalRatio();
+    this.audio.setGearRatio(gearRatio);
     this.audio.update(
       state.rpm,
       state.throttle,

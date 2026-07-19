@@ -50,10 +50,16 @@ export class SynthEngine {
   private idleLFO2: OscillatorNode | null = null;
   private idleLFO2Gain: GainNode | null = null;
 
+  // Transmission whine
+  private trannyOsc: OscillatorNode | null = null;
+  private trannyGain: GainNode | null = null;
+  private trannyFilter: BiquadFilterNode | null = null;
+
   private running = false;
   private noiseBuffer: AudioBuffer | null = null;
   private cylinderCount = 10;
   private redline = 9000;
+  private gearRatio = 1;
 
   constructor(ctx: AudioContext, output: GainNode) {
     this.ctx = ctx;
@@ -64,6 +70,10 @@ export class SynthEngine {
   setEngineConfig(cylinders: number, redline: number): void {
     this.cylinderCount = cylinders;
     this.redline = redline;
+  }
+
+  setGearRatio(ratio: number): void {
+    this.gearRatio = ratio;
   }
 
   private createNoiseBuffer(): void {
@@ -240,6 +250,21 @@ export class SynthEngine {
     this.idleLFO2.connect(this.idleLFO2Gain);
     this.idleLFO2Gain.connect(this.exhaustOscs[0].frequency);
     this.idleLFO2.start();
+
+    // ═══ TRANSMISSION WHINE ═══
+    this.trannyOsc = this.ctx.createOscillator();
+    this.trannyOsc.type = 'sawtooth';
+    this.trannyOsc.frequency.value = 100;
+    this.trannyGain = this.ctx.createGain();
+    this.trannyGain.gain.value = 0;
+    this.trannyFilter = this.ctx.createBiquadFilter();
+    this.trannyFilter.type = 'bandpass';
+    this.trannyFilter.frequency.value = 2000;
+    this.trannyFilter.Q.value = 2;
+    this.trannyOsc.connect(this.trannyFilter);
+    this.trannyFilter.connect(this.trannyGain);
+    this.trannyGain.connect(this.output);
+    this.trannyOsc.start();
   }
 
   update(rpm: number, throttle: number, atRevLimiter: boolean): void {
@@ -350,20 +375,27 @@ export class SynthEngine {
       this.idleLFO2Gain.gain.setTargetAtTime(idleFreqIntensity * 20, now, 0.08);
     }
 
-    // ═══ REV LIMITER — lebih realistis ═══
+    // ═══ REV LIMITER — lebih agresif ═══
     if (this.limiterLFO && this.limiterGain) {
       if (atRevLimiter) {
-        // Rapid stutter — lebih agresif
-        this.limiterLFO.frequency.setTargetAtTime(12 + Math.random() * 10, now, 0.003);
-        this.limiterGain.gain.setTargetAtTime(0.5, now, 0.003);
-        // Juga modulate exhaust volume langsung untuk efek "bounce"
+        this.limiterLFO.frequency.setTargetAtTime(15 + Math.random() * 10, now, 0.003);
+        this.limiterGain.gain.setTargetAtTime(0.6, now, 0.003);
         if (this.exhaustMasterGain) {
-          const bounceVol = (0.15 + rpmNorm * 0.55) * (0.15 + throttle * 0.85) * 0.6;
-          this.exhaustMasterGain.gain.setTargetAtTime(bounceVol, now, 0.005);
+          const bounceVol = (0.15 + rpmNorm * 0.55) * (0.15 + throttle * 0.85) * 0.5;
+          this.exhaustMasterGain.gain.setTargetAtTime(bounceVol, now, 0.003);
         }
       } else {
         this.limiterGain.gain.setTargetAtTime(0, now, 0.02);
       }
+    }
+
+    // ═══ TRANSMISSION WHINE ═══
+    if (this.trannyOsc && this.trannyGain && this.trannyFilter) {
+      const trannyFreq = rpm * this.gearRatio * 0.05;
+      this.trannyOsc.frequency.setTargetAtTime(trannyFreq, now, 0.02);
+      const trannyVol = throttle * 0.06 * (0.3 + rpmNorm * 0.7);
+      this.trannyGain.gain.setTargetAtTime(trannyVol, now, 0.03);
+      this.trannyFilter.frequency.setTargetAtTime(1500 + rpmNorm * 2000, now, 0.03);
     }
 
     // ═══ TRACK PREV THROTTLE ═══
@@ -385,6 +417,7 @@ export class SynthEngine {
       this.limiterLFO?.stop();
       this.idleLFO1?.stop();
       this.idleLFO2?.stop();
+      this.trannyOsc?.stop();
     } catch { /* already stopped */ }
 
     this.exhaustOscs = [];
@@ -398,5 +431,6 @@ export class SynthEngine {
     this.limiterLFO = null;
     this.idleLFO1 = null;
     this.idleLFO2 = null;
+    this.trannyOsc = null;
   }
 }

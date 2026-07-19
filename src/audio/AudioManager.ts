@@ -101,6 +101,10 @@ export class AudioManager {
     this.synthEngine?.setEngineConfig(cylinders, redline);
   }
 
+  setGearRatio(ratio: number): void {
+    this.synthEngine?.setGearRatio(ratio);
+  }
+
   async loadEngineSounds(configId: string, samples: Record<string, string>): Promise<void> {
     if (!this.ctx || !this.masterGain) await this.init();
     if (!this.ctx || !this.masterGain) return;
