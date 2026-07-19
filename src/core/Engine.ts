@@ -68,10 +68,10 @@ export class Engine {
   }
 
   step(dt: number, _loadTorque: number, _throttleInput: number): void {
-    // Starter motor logic
+    // Starter motor logic — target 1500 RPM, ramp cepat
     if (!this.state.isRunning) {
       if (this.state.isStarterEngaged && this.state.ignitionOn) {
-        this.state.rpm += (1500 - this.state.rpm) * dt * 3;
+        this.state.rpm += (1500 - this.state.rpm) * dt * 25;
         if (this.state.rpm >= 800) {
           this.state.isRunning = true;
           this.state.isStarterEngaged = false;

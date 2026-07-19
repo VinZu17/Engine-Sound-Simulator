@@ -127,7 +127,10 @@ export class Vehicle {
     } else {
       state.throttle = 0;
       engineTorque = 0;
-      if (state.rpm < 50) state.rpm = 0;
+      // Jangan reset RPM kalau starter lagi engaged
+      if (state.rpm < 50 && !state.isStarterEngaged) {
+        state.rpm = 0;
+      }
     }
 
     // ═══ CLUTCH / DRIVETRAIN ═══
