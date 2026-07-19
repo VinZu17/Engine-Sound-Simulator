@@ -14,9 +14,8 @@ A browser-based engine simulator featuring real-time audio synthesis, procedural
 
 [**Live Demo**](https://vinzu17.github.io/Engine-Sound-Simulator/) · [**Report Bug**](https://github.com/VinZu17/Engine-Sound-Simulator/issues)
 
-<div align="left">
 ---
-
+<div align="left">
 ## ✨ Features
 
 ### 🎵 Audio System
