@@ -40,7 +40,7 @@ export class Vehicle {
   startEngine(): void {
     const state = this.engine.getState();
     state.ignitionOn = true;
-    state.isStarterEngaged = true;
+    state.isStarterEngaged = false; // Jangan langsung start — tunggu E
     state.isRunning = false;
   }
 
