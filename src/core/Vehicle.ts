@@ -82,7 +82,8 @@ export class Vehicle {
 
     // ═══ IGNITION-CUT REV LIMITER (dari engine-sim ignition_module.cpp) ═══
     let isRevLimited = false;
-    if (state.rpm >= config.redline) {
+    // Cuma trigger cut sekali per event — jangan reset kalau timer masih aktif
+    if (state.rpm >= config.redline && this.ignitionCutTimer <= 0) {
       this.ignitionCutTimer = 0.5;
     }
     if (this.ignitionCutTimer > 0) {
@@ -121,7 +122,9 @@ export class Vehicle {
       const inertia = (gear > 0 && clutchFactor > 0.1)
         ? config.flywheelInertia + this.vehicleMass * Math.pow(this.wheelRadius / totalRatio, 2) * clutchFactor
         : config.flywheelInertia;
-      const alpha = netEngineTorque / inertia;
+      // Internal friction — biar RPM turun di neutral saat ignition cut
+      const frictionTorque = isRevLimited ? -20 : 0;
+      const alpha = (netEngineTorque + frictionTorque) / inertia;
       state.rpm += alpha * dt * (30 / Math.PI);
     } else {
       state.throttle = 0;
