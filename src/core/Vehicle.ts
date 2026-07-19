@@ -131,7 +131,8 @@ export class Vehicle {
     if (state.isRunning && !isRevLimited) {
       if (state.rpm < config.idleRPM * 1.1) {
         const ds = config.idleRPM * config.idleRPM - state.rpm * state.rpm;
-        this.idleVelocity += dt * (-ds * 0.0001) - this.idleVelocity * dt * 0.5;
+        // ds > 0 when below idle → need positive torque to pull up
+        this.idleVelocity += dt * (ds * 0.0001) - this.idleVelocity * dt * 0.5;
         this.idleVelocity = Math.max(-0.3, Math.min(0.3, this.idleVelocity));
         const idleTorque = this.idleVelocity * config.flywheelInertia * 100;
         state.rpm += (idleTorque / config.flywheelInertia) * dt * (30 / Math.PI);
