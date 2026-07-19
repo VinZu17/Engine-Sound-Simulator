@@ -37,41 +37,41 @@ A browser-based engine simulator featuring real-time audio synthesis, procedural
 
 ### 🎮 Controls
 
-| Key | Action |
-|-----|--------|
-| `R` | Toggle ignition on/off |
-| `E` (hold) | Starter motor (crank engine) |
-| `Space` | Throttle |
-| `B` | Brake |
-| `C` (hold) | Clutch (disengage) |
-| `Arrow Up` | Shift up |
-| `Arrow Down` | Shift down |
+| Key          | Action                         |
+|--------------|--------------------------------|
+| `R`          | Toggle ignition on/off         |
+| `E` (hold)   | Starter motor (crank engine)   |
+| `Space`      | Throttle                       |
+| `B`          | Brake                          |
+| `C` (hold)   | Clutch (disengage)             |
+| `Arrow Up`   | Shift up                       |
+| `Arrow Down` | Shift down                     |
 
 ---
 
 ## 🏎️ Engine Presets
 
-| Engine | Type | Cylinders | Redline | Sound Character |
-|--------|------|-----------|---------|-----------------|
-| **Lexus LFA V10** | V10 | 10 | 9,000 RPM | High-pitch scream |
-| **Subaru EJ25** | Boxer-4 | 4 | 7,000 RPM | Unequal-length header rumble |
-| **Toyota 2JZ-GTE** | Inline-6 | 6 | 7,800 RPM | Smooth & clean |
-| **Honda F20C** | Inline-4 | 4 | 9,000 RPM | VTEC crossover character |
-| **BMW M52B28** | Inline-6 | 6 | 6,500 RPM | Smooth & refined |
-| **Ferrari F136 V8** | Crossplane V8 | 8 | 9,000 RPM | Aggressive crossplane |
+| Engine               | Type            | Cylinders | Redline   | Sound Character              |
+|----------------------|-----------------|-----------|---------  |------------------------------|
+| **Lexus LFA V10**    | V10             | 10        | 9,000 RPM | High-pitch scream            |
+| **Subaru EJ25**      | Boxer-4         | 4         | 7,000 RPM | Unequal-length header rumble |
+| **Toyota 2JZ-GTE**   | Inline-6        | 6         | 7,800 RPM | Smooth & clean               |
+| **Honda F20C**       | Inline-4        | 4         | 9,000 RPM | VTEC crossover character     |
+| **BMW M52B28**       | Inline-6        | 6         | 6,500 RPM | Smooth & refined             |
+| **Ferrari F136 V8**  | Crossplane V8   | 8         | 9,000 RPM | Aggressive crossplane        |
 
 ---
 
 ## 🛠️ Tech Stack
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Build | Vite 6 | Dev server + bundler |
-| Language | TypeScript 5.7 | Type-safe development |
-| 3D Render | Three.js | Procedural engine model |
-| Audio | WebAudio API | Realtime synthesis |
-| Physics | Custom TypeScript | Vehicle dynamics simulation |
-| UI | Vanilla HTML/CSS | Dark theme racing UI |
+| Layer     | Technology        | Purpose                     |
+|-----------|-------------------|-----------------------------|
+| Build     | Vite 6            | Dev server + bundler        |
+| Language  | TypeScript 5.7    | Type-safe development       |
+| 3D Render | Three.js          | Procedural engine model     |
+| Audio     | WebAudio API      | Realtime synthesis          |
+| Physics   | Custom TypeScript | Vehicle dynamics simulation |
+| UI        | Vanilla HTML/CSS  | Dark theme racing UI        |
 
 ---
 
@@ -122,20 +122,20 @@ src/
 ## 🏗️ Architecture
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌──────────────┐
-│   Input     │────▶│   Physics    │────▶│    Audio     │
-│  (Keyboard) │     │  (Vehicle)   │     │  (SynthEngine)│
-└─────────────┘     └──────┬───────┘     └──────┬───────┘
-                           │                     │
-                    ┌──────▼───────┐      ┌──────▼───────┐
-                    │   3D Render  │      │  Convolver   │
-                    │  (Three.js)  │      │  (IR Reverb) │
-                    └──────┬───────┘      └──────┬───────┘
-                           │                     │
-                    ┌──────▼─────────────────────▼───────┐
-                    │          Canvas Dashboard           │
-                    │     (RPM Gauge + Speed Gauge)       │
-                    └────────────────────────────────────┘
+┌─────────────┐       ┌──────────────┐       ┌───────────────┐
+│   Input     │────▶ |  Physics     │────▶  │     Audio     │
+│  (Keyboard) │       │  (Vehicle)   │       │  (SynthEngine)│
+└─────────────┘       └──────┬───────┘       └──────┬────────┘
+                             │                      │
+                      ┌──────▼───────┐       ┌──────▼───────┐
+                      │   3D Render  │       │  Convolver   │
+                      │  (Three.js)  │       │  (IR Reverb) │
+                      └──────┬───────┘       └──────┬───────┘
+                             │                      │
+                      ┌──────▼──────────────────────▼────────┐
+                      │          Canvas Dashboard            │
+                      │     (RPM Gauge + Speed Gauge)        │
+                      └──────────────────────────────────────┘
 ```
 
 ---
@@ -164,14 +164,14 @@ RPM + Throttle
 
 ## ⚙️ Physics Model
 
-| Formula | Description |
-|---------|-------------|
-| `torque = getTorqueAtRPM(rpm) × pow(throttle, 1.2)` | Engine torque with power curve |
-| `braking = -peakTorque × 0.35 × rpmRatio` | Engine braking (off-throttle) |
-| `F_drag = 0.5 × ρ × Cd × A × v²` | Aerodynamic drag |
-| `F_rolling = μ × m × g` | Rolling resistance |
-| `a = F_net / (m + I_wheel/r²)` | Vehicle acceleration with wheel inertia |
-| `RPM = wheelRPM × gearRatio × finalDrive` | Engine-wheel coupling |
+| Formula                                             | Description                             |
+|-----------------------------------------------------|-----------------------------------------|
+| `torque = getTorqueAtRPM(rpm) × pow(throttle, 1.2)` | Engine torque with power curve          |
+| `braking = -peakTorque × 0.35 × rpmRatio`           | Engine braking (off-throttle)           |
+| `F_drag = 0.5 × ρ × Cd × A × v²`                    | Aerodynamic drag                        |
+| `F_rolling = μ × m × g`                             | Rolling resistance                      |
+| `a = F_net / (m + I_wheel/r²)`                      | Vehicle acceleration with wheel inertia |
+| `RPM = wheelRPM × gearRatio × finalDrive`           | Engine-wheel coupling                   |
 
 ---
 
