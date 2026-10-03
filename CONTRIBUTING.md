@@ -54,5 +54,7 @@ npm run build
 - `src/input/` — keyboard input handling
 - `src/ui/` — interface and interaction logic
 - `src/config/` — engine preset configuration
+- `docs/` — reference documentation for controls, engine presets, architecture, and development commands
+- `TROUBLESHOOTING.md` — problem/solution reference for startup, audio, build, and input issues
 
 For larger changes, keep the implementation aligned with the existing architecture and avoid unrelated refactors.
