@@ -181,6 +181,19 @@ RPM + Throttle
 
 ---
 
+## 📚 Documentation
+
+| Document | Contents |
+|----------|----------|
+| [Controls Reference](docs/CONTROLS.md) | Keyboard controls, startup sequence, basic operating tips |
+| [Engine Presets Reference](docs/ENGINE_PRESETS.md) | The six built-in engine presets, cylinder layouts, redlines, sound character |
+| [Architecture Notes](docs/ARCHITECTURE.md) | How input, physics, drivetrain, rendering, and audio fit together |
+| [Development Commands](docs/DEVELOPMENT_COMMANDS.md) | npm commands for local development and production builds |
+| [Troubleshooting](TROUBLESHOOTING.md) | Startup, audio, engine-control, build, and keyboard-focus problems |
+| [Contributing](CONTRIBUTING.md) | How to propose and submit changes |
+
+---
+
 ## 📋 Roadmap
 
 - [x] Core physics simulation
