@@ -15,7 +15,13 @@ A browser-based engine simulator featuring real-time audio synthesis, procedural
 [**Live Demo**](https://vinzu17.github.io/Engine-Sound-Simulator/) · [**Report Bug**](https://github.com/VinZu17/Engine-Sound-Simulator/issues)
 
 ---
+
+## 🎯 What This Project Does
+
+Engine Sound Simulator combines a custom vehicle physics model with procedural engine audio and a real-time 3D dashboard. Change throttle, gears, and engine presets to hear and see how RPM-driven simulation affects the engine.
+
 <div align="left">
+
 ## ✨ Features
 
 ### 🎵 Audio System
@@ -123,7 +129,7 @@ src/
 
 ```
 ┌─────────────┐       ┌──────────────┐       ┌───────────────┐
-│   Input     │────▶ |  Physics     │────▶  │     Audio     │
+│   Input     │────▶ │  Physics     │────▶  │     Audio     │
 │  (Keyboard) │       │  (Vehicle)   │       │  (SynthEngine)│
 └─────────────┘       └──────┬───────┘       └──────┬────────┘
                              │                      │
